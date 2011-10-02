@@ -35,7 +35,7 @@ lesspipe_file() {
 		*" shared object"*) suffix="so";;
 		*" tar archive"*)   suffix="tar";;
 		*" Zip archive"*)   suffix="zip";;
-		*": data")          strings "$1"; return 0;;
+		*": data")          hexdump -C -- "$1"; return 0;;
 		*)                  return 1;;
 	esac
 	lesspipe "$1" ".${suffix}"
@@ -48,6 +48,15 @@ lesspipe() {
 
 	local DECOMPRESSOR=$(guesscompress "$match")
 
+	# User filters
+	if [[ -x ~/.lessfilter ]] ; then
+		~/.lessfilter "$1" && exit 0
+	fi
+
+	local ignore
+	for ignore in ${LESSIGNORE} ; do
+		[[ ${match} == *.${ignore} ]] && exit 0
+	done
 
 	case "$match" in
 
@@ -80,8 +89,7 @@ lesspipe() {
 		;;
 	*.dvi)      dvi2tty "$1" ;;
 	*.ps|*.pdf) ps2ascii "$1" || pstotext "$1" || pdftotext "$1" ;;
-	*.doc)      antiword -r -s "$1" ;;
-	*.ppt)      catppt "$1" ;;
+	*.doc)      antiword "$1" || catdoc "$1" ;;
 	*.rtf)      unrtf --nopict --text "$1" ;;
 	*.conf|*.txt|*.log) ;; # force less to work on these directly #150256
 
@@ -187,6 +195,28 @@ lesspipe() {
 			# Maybe we didn't match because the file is named weird ...
 			1) lesspipe_file "$1" ;;
 		esac
+
+		# So no matches from above ... finally fall back to an external
+		# coloring package.  No matching here so we don't have to worry
+		# about keeping in sync with random packages.  Any coloring tool
+		# you use should not output errors about unsupported files to
+		# stdout.  If it does, it's your problem.
+
+		# Allow people to flip color off if they dont want it
+		case ${LESSCOLOR} in
+			always)                   LESSCOLOR=2;;
+			[yY][eE][sS]|[yY]|1|true) LESSCOLOR=1;;
+			[nN][oO]|[nN]|0|false)    LESSCOLOR=0;;
+			*)                        LESSCOLOR=0;; # default to no color #188835
+		esac
+		if [[ ${LESSCOLOR} != "0" ]] && [[ -n ${LESSCOLORIZER=code2color} ]] ; then
+			# 2: Only colorize if user forces it ...
+			# 1: ... or we know less will handle raw codes -- this will
+			#    not detect -seiRM, so set LESSCOLORIZER yourself
+			if [[ ${LESSCOLOR} == "2" ]] || [[ " ${LESS} " == *" -"[rR]" "* ]] ; then
+				${LESSCOLORIZER} "$1"
+			fi
+		fi
 
 		# Nothing left to do but let less deal
 		exit 0
